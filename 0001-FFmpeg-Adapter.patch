@@ -1,0 +1,189 @@
+From 4ffce93c360483439cd8f5db9ca85c61113dae76 Mon Sep 17 00:00:00 2001
+From: Chris Walker <tekuconcept@ymail.com>
+Date: Tue, 20 Aug 2019 13:19:03 -0600
+Subject: [PATCH] FFmpeg Adapter
+
+---
+ examples/BUILD.gn                           | 11 +++
+ examples/peerconnection/client/conductor.cc | 84 ++++++++++++++-------
+ examples/peerconnection/client/conductor.h  |  2 +
+ 3 files changed, 69 insertions(+), 28 deletions(-)
+
+diff --git a/examples/BUILD.gn b/examples/BUILD.gn
+index 4ed07af983..d8d834b0b6 100644
+--- a/examples/BUILD.gn
++++ b/examples/BUILD.gn
+@@ -674,6 +674,17 @@ if (is_linux || is_win) {
+       "peerconnection/client/defaults.h",
+       "peerconnection/client/peer_connection_client.cc",
+       "peerconnection/client/peer_connection_client.h",
++      "peerconnection/client/ffmpeg/ffmpeg_audio_device_factory.cc",
++      "peerconnection/client/ffmpeg/ffmpeg_audio_device_factory.h",
++      "peerconnection/client/ffmpeg/ffmpeg_audio_device_module.cc",
++      "peerconnection/client/ffmpeg/ffmpeg_audio_device_module.h",
++      "peerconnection/client/ffmpeg/ffmpeg_audio_device.cc",
++      "peerconnection/client/ffmpeg/ffmpeg_audio_device.h",
++      "peerconnection/client/ffmpeg/ffmpeg_video_capture_module.cc",
++      "peerconnection/client/ffmpeg/ffmpeg_video_capture_module.h",
++      "peerconnection/client/ffmpeg/ffmpeg_video_device_info.cc",
++      "peerconnection/client/ffmpeg/ffmpeg_video_factory.cc",
++      "peerconnection/client/ffmpeg/ffmpeg_video_factory.h"
+     ]
+ 
+     if (!build_with_chromium && is_clang) {
+diff --git a/examples/peerconnection/client/conductor.cc b/examples/peerconnection/client/conductor.cc
+index a781c4a187..e148d10cb1 100644
+--- a/examples/peerconnection/client/conductor.cc
++++ b/examples/peerconnection/client/conductor.cc
+@@ -20,6 +20,7 @@
+ #include "api/video_codecs/builtin_video_decoder_factory.h"
+ #include "api/video_codecs/builtin_video_encoder_factory.h"
+ #include "examples/peerconnection/client/defaults.h"
++#include "media/engine/webrtcvideocapturer.h"
+ #include "media/engine/webrtcvideocapturerfactory.h"
+ #include "modules/audio_device/include/audio_device.h"
+ #include "modules/audio_processing/include/audio_processing.h"
+@@ -28,6 +29,9 @@
+ #include "rtc_base/logging.h"
+ #include "rtc_base/strings/json.h"
+ 
++#include "examples/peerconnection/client/ffmpeg/ffmpeg_video_factory.h"
++#include "examples/peerconnection/client/ffmpeg/ffmpeg_audio_device_module.h"
++
+ // Names used for a IceCandidate JSON object.
+ const char kCandidateSdpMidName[] = "sdpMid";
+ const char kCandidateSdpMlineIndexName[] = "sdpMLineIndex";
+@@ -54,10 +58,17 @@ Conductor::Conductor(PeerConnectionClient* client, MainWindow* main_wnd)
+     : peer_id_(-1), loopback_(false), client_(client), main_wnd_(main_wnd) {
+   client_->RegisterObserver(this);
+   main_wnd->RegisterObserver(this);
++
++  worker_thread_ = rtc::Thread::Create();
++  worker_thread_->SetName("pc_worker_thread", nullptr);
++  worker_thread_->Start();
+ }
+ 
+ Conductor::~Conductor() {
+   RTC_DCHECK(!peer_connection_);
++  if (worker_thread_) {
++    worker_thread_->Stop();
++  }
+ }
+ 
+ bool Conductor::connection_active() const {
+@@ -73,13 +84,21 @@ bool Conductor::InitializePeerConnection() {
+   RTC_DCHECK(!peer_connection_factory_);
+   RTC_DCHECK(!peer_connection_);
+ 
++  rtc::scoped_refptr<webrtc::AudioDeviceModule> default_adm(
++    worker_thread_->Invoke<rtc::RefCountedObject<FFmpegAudioDeviceModule>*>(
++      RTC_FROM_HERE,
++      [](){ return new rtc::RefCountedObject<FFmpegAudioDeviceModule>(); }));
++
+   peer_connection_factory_ = webrtc::CreatePeerConnectionFactory(
+-      nullptr /* network_thread */, nullptr /* worker_thread */,
+-      nullptr /* signaling_thread */, nullptr /* default_adm */,
++      nullptr /* network_thread */,
++      worker_thread_.get() /* worker_thread */,
++      nullptr /* signaling_thread */,
++      default_adm /* default_adm */,
+       webrtc::CreateBuiltinAudioEncoderFactory(),
+       webrtc::CreateBuiltinAudioDecoderFactory(),
+       webrtc::CreateBuiltinVideoEncoderFactory(),
+-      webrtc::CreateBuiltinVideoDecoderFactory(), nullptr /* audio_mixer */,
++      webrtc::CreateBuiltinVideoDecoderFactory(),
++      nullptr /* audio_mixer */,
+       nullptr /* audio_processing */);
+ 
+   if (!peer_connection_factory_) {
+@@ -373,33 +392,42 @@ void Conductor::ConnectToPeer(int peer_id) {
+ }
+ 
+ std::unique_ptr<cricket::VideoCapturer> Conductor::OpenVideoCaptureDevice() {
+-  std::vector<std::string> device_names;
+-  {
+-    std::unique_ptr<webrtc::VideoCaptureModule::DeviceInfo> info(
+-        webrtc::VideoCaptureFactory::CreateDeviceInfo());
+-    if (!info) {
+-      return nullptr;
+-    }
+-    int num_devices = info->NumberOfDevices();
+-    for (int i = 0; i < num_devices; ++i) {
+-      const uint32_t kSize = 256;
+-      char name[kSize] = {0};
+-      char id[kSize] = {0};
+-      if (info->GetDeviceName(i, name, kSize, id, kSize) != -1) {
+-        device_names.push_back(name);
+-      }
+-    }
++  { // [- THIS CODE USES THE DETECTED HOST'S CAMERA -]
++    // std::vector<std::string> device_names;
++    // {
++    //   std::unique_ptr<webrtc::VideoCaptureModule::DeviceInfo> info(
++    //       webrtc::VideoCaptureFactory::CreateDeviceInfo());
++    //   if (!info) {
++    //     return nullptr;
++    //   }
++    //   int num_devices = info->NumberOfDevices();
++    //   for (int i = 0; i < num_devices; ++i) {
++    //     const uint32_t kSize = 256;
++    //     char name[kSize] = {0};
++    //     char id[kSize] = {0};
++    //     if (info->GetDeviceName(i, name, kSize, id, kSize) != -1) {
++    //       device_names.push_back(name);
++    //     }
++    //   }
++    // }
++
++    // cricket::WebRtcVideoDeviceCapturerFactory factory;
++    // std::unique_ptr<cricket::VideoCapturer> capturer;
++    // for (const auto& name : device_names) {
++    //   capturer = factory.Create(cricket::Device(name, 0)); // returns webrtcvideocapturer init with device
++    //   if (capturer) {
++    //     break;
++    //   }
++    // }
++
++    // return capturer;
+   }
+ 
+-  cricket::WebRtcVideoDeviceCapturerFactory factory;
+-  std::unique_ptr<cricket::VideoCapturer> capturer;
+-  for (const auto& name : device_names) {
+-    capturer = factory.Create(cricket::Device(name, 0));
+-    if (capturer) {
+-      break;
+-    }
+-  }
+-  return capturer;
++  std::unique_ptr<cricket::WebRtcVideoCapturer> capturer
++    (new cricket::WebRtcVideoCapturer(new FFmpegVideoFactory()));
++  if (!capturer->Init(cricket::Device("ffmpeg-0", 0)))
++    capturer = std::unique_ptr<cricket::WebRtcVideoCapturer>();
++  return std::move(capturer);
+ }
+ 
+ void Conductor::AddTracks() {
+diff --git a/examples/peerconnection/client/conductor.h b/examples/peerconnection/client/conductor.h
+index a038743915..dd90727685 100644
+--- a/examples/peerconnection/client/conductor.h
++++ b/examples/peerconnection/client/conductor.h
+@@ -21,6 +21,7 @@
+ #include "api/peerconnectioninterface.h"
+ #include "examples/peerconnection/client/main_wnd.h"
+ #include "examples/peerconnection/client/peer_connection_client.h"
++#include "rtc_base/thread.h"
+ 
+ namespace webrtc {
+ class VideoCaptureModule;
+@@ -130,6 +131,7 @@ class Conductor : public webrtc::PeerConnectionObserver,
+   MainWindow* main_wnd_;
+   std::deque<std::string*> pending_messages_;
+   std::string server_;
++  std::unique_ptr<rtc::Thread> worker_thread_;
+ };
+ 
+ #endif  // EXAMPLES_PEERCONNECTION_CLIENT_CONDUCTOR_H_
+-- 
+2.17.1
+
