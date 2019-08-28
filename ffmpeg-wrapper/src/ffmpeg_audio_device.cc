@@ -8,7 +8,7 @@
  *  Referenced from modules/audio_device/dummy/file_audio_device.cc
  */
 
-#include "examples/peerconnection/client/ffmpeg/ffmpeg_audio_device.h"
+#include "ffmpeg_audio_device.h"
 
 #include <string.h>
 #include <sstream>
