@@ -4,19 +4,29 @@
 # Created by TekuConcept on August 22, 2019
 #
 # Generate webrtc native build project with
-# > gn gen out/GCC --args="is_clang=false is_debug=false \
+# > gn gen out/GCC --args='is_clang=false is_debug=false \
 # > is_component_build=false use_custom_libcxx=false \
 # > use_cxx11=true rtc_include_tests=false \
-# > rtc_build_examples=true treat_warnings_as_errors=false"
+# > rtc_build_examples=true treat_warnings_as_errors=false \
+# > rtc_use_h264=true rtc_use_builtin_sw_codecs=false'
+#
+# Add 'target_os="linux" target_cpu="arm64"' for
+# cross-compiled ARM64 builds
 #
 
 print_usage_and_die() {
     echo "Usage: $0 [-o <output_dir>] [-w <webrtc_dir>] build_dir"
     echo "Options:"
-    echo "    --clear:      deletes the output directory without"
-    echo "                  asking if it already exists"
-    echo "    --no-sysroot: do not copy all third-party shared libraries"
-    echo "                  from the webrtc virtual sysroot to the sdk"
+    echo "    --clear:       deletes the output directory without"
+    echo "                   asking if it already exists"
+    echo "    --no-sysroot:  do not copy all third-party shared libraries"
+    echo "                   from the webrtc virtual sysroot to the sdk"
+    echo "    -a <arch>"
+    echo "    --arch <arch>: specifies which sysroot architecture to include"
+    echo "                   "
+    echo "                   AMD64 (default)"
+    echo "                   ARM64"
+    echo "    --update-libs: only update SDK libraries"
     exit 1
 }
 
@@ -55,6 +65,7 @@ assert_file_or_dir_exists() {
 #
 
 EXEC_DIR="$(readlink -f "$( dirname "${BASH_SOURCE[0]}")")"
+ARCH="AMD64" # default
 
 # enumerate through all args
 # separate key:value pairs from tokens
@@ -70,6 +81,10 @@ while [[ $# -gt 0 ]]; do
             WEBRTC_DIR="$2"
             shift
             ;;
+        -a|--arch)
+            ARCH="$2"
+            shift
+            ;;
         *)    # unknown option
             TOKENS+=("$1")
             ;;
@@ -80,6 +95,9 @@ done
 # parse non-key:value tokens
 CLEAR_OUTPUT=false
 WITH_SYSROOT=true
+UPDATE_INCLUDES=true
+UPDATE_LIBS=true
+UPDATE_SYSROOT=true
 if [[ ${#TOKENS[@]} < 1 ]]; then print_usage_and_die; fi
 for token in "${TOKENS[@]}"; do
     case $token in
@@ -88,6 +106,10 @@ for token in "${TOKENS[@]}"; do
             ;;
         --no-sysroot)
             WITH_SYSROOT=false
+            ;;
+        --update-libs)
+            UPDATE_INCLUDES=false
+            UPDATE_SYSROOT=false
             ;;
         *)
             # TODO: check if too many wildcards
@@ -122,6 +144,11 @@ else
     OUTPUT_DIR=$(readlink -f $OUTPUT_DIR)
 fi
 
+if [ $ARCH != "AMD64" ] && [ $ARCH != "ARM64" ]; then
+    echo -e "\033[0;91m Target sysroot arch is not recognized: ${ARCH}\033[0m"
+    exit 1
+fi
+
 echo "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
 echo "Output: $(realpath --relative-to="$EXEC_DIR" "$OUTPUT_DIR")"
 echo "WebRTC: $(realpath --relative-to="$EXEC_DIR" "$WEBRTC_DIR")"
@@ -134,7 +161,7 @@ OUTPUT_TEMP_DIR=$OUTPUT_DIR/temp
 
 if [ "$CLEAR_OUTPUT" = true ]; then
     rm -rf $OUTPUT_DIR # reset for next generation
-elif [ "$(ls -A $OUTPUT_DIR)" ]; then
+elif [ "$(ls -A $OUTPUT_DIR)" ] && [ "$UPDATE_LIBS" = false ]; then
     echo "$OUTPUT_DIR is not empty"
     echo "You can skip this check by adding --clear"
     read -p "Continue? (Y/N): " confirm && \
@@ -176,21 +203,23 @@ for token in "${object_folders}"; do
     assert_directory_exists $token
 done
 
-cd $BUILD_OBJ_DIR
-for folder in "${object_folders[@]}"; do
-    find $folder -type f -name \*.o | while read FILE; do
-        TARGET=$(realpath --relative-to="$BUILD_OBJ_DIR" "$FILE")
+if [ "$UPDATE_LIBS" = true ]; then
+    cd $BUILD_OBJ_DIR
+    for folder in "${object_folders[@]}"; do
+        find $folder -type f -name \*.o | while read FILE; do
+            TARGET=$(realpath --relative-to="$BUILD_OBJ_DIR" "$FILE")
+            echo "Copying ${OUTPUT_LIB_DIR}/${TARGET}"
+            cp --parents "$TARGET" -t $OUTPUT_LIB_DIR
+        done
+    done
+
+    for archive in "${archive_files[@]}"; do
+        TARGET=$(realpath --relative-to="$BUILD_OBJ_DIR" "$archive")
         echo "Copying ${OUTPUT_LIB_DIR}/${TARGET}"
         cp --parents "$TARGET" -t $OUTPUT_LIB_DIR
     done
-done
-
-for archive in "${archive_files[@]}"; do
-    TARGET=$(realpath --relative-to="$BUILD_OBJ_DIR" "$archive")
-    echo "Copying ${OUTPUT_LIB_DIR}/${TARGET}"
-    cp --parents "$TARGET" -t $OUTPUT_LIB_DIR
-done
-cd $EXEC_DIR
+    cd $EXEC_DIR
+fi
 
 
 
@@ -220,18 +249,20 @@ include_folders=(\
     "video" \
 )
 
-cd $WEBRTC_DIR # enter source directory to capture file-directory structure
-for folder in "${include_folders[@]}"; do
-    find $WEBRTC_DIR/$folder -type f -name \*.h | while read FILE; do
-        TARGET=$(realpath --relative-to="$WEBRTC_DIR" "$FILE")
-        echo "Copying ${OUTPUT_INCLUDE_DIR}/${TARGET}"
-        cp --parents "$TARGET" -t $OUTPUT_INCLUDE_DIR
+if [ "$UPDATE_INCLUDES" = true ]; then
+    cd $WEBRTC_DIR # enter source directory to capture file-directory structure
+    for folder in "${include_folders[@]}"; do
+        find $WEBRTC_DIR/$folder -type f -name \*.h | while read FILE; do
+            TARGET=$(realpath --relative-to="$WEBRTC_DIR" "$FILE")
+            echo "Copying ${OUTPUT_INCLUDE_DIR}/${TARGET}"
+            cp --parents "$TARGET" -t $OUTPUT_INCLUDE_DIR
+        done
     done
-done
-cd $EXEC_DIR # go back to executing directory
+    cd $EXEC_DIR # go back to executing directory
 
-echo "Copying ${OUTPUT_INCLUDE_DIR}/common_types.h"
-cp $WEBRTC_DIR/common_types.h $OUTPUT_INCLUDE_DIR/common_types.h
+    echo "Copying ${OUTPUT_INCLUDE_DIR}/common_types.h"
+    cp $WEBRTC_DIR/common_types.h $OUTPUT_INCLUDE_DIR/common_types.h
+fi
 
 
 
@@ -246,7 +277,14 @@ if [ "$WITH_SYSROOT" = true ]; then
     mkdir -p ${OUTPUT_SYSROOT_INCLUDE_DIR}
     mkdir -p ${OUTPUT_SYSROOT_LIB_DIR}
 
-    SYSROOT_DIR=$WEBRTC_DIR/build/linux/debian_sid_amd64-sysroot
+    if [ $ARCH == "AMD64" ]; then
+        SYSROOT_DIR=$WEBRTC_DIR/build/linux/debian_sid_amd64-sysroot
+    elif [ $ARCH == "ARM64" ]; then
+        SYSROOT_DIR=$WEBRTC_DIR/build/linux/debian_sid_arm64-sysroot
+    else
+        echo "An internal error occured"
+        exit 1
+    fi
     SYSROOT_INCLUDE_DIR=$SYSROOT_DIR/usr/include
     SYSROOT_LIB_DIR=$SYSROOT_DIR/usr/lib/x86_64-linux-gnu
 
@@ -268,57 +306,59 @@ if [ "$WITH_SYSROOT" = true ]; then
         "${WEBRTC_DIR}/third_party/abseil-cpp/absl" \
     )
 
-    for token in "${third_party_includes[@]}"; do
-        assert_file_or_dir_exists $token
-        echo "Copying $(basename $token)"
-        cp -ar $token -t $OUTPUT_SYSROOT_INCLUDE_DIR
-    done
-
-    # cleanup absl folder
-    # NOTE: this takes time (~250 ms)
-    find $OUTPUT_SYSROOT_INCLUDE_DIR/absl ! -name \*.h -type f | \
-    while read FILE; do rm $FILE; done
-
-    find $SYSROOT_LIB_DIR -maxdepth 1 -type f -name \*.so\* | \
-    while read FILE; do
-        echo "Copying $(basename $FILE)"
-        cp $FILE -t $OUTPUT_SYSROOT_LIB_DIR
-    done
-
-    find $SYSROOT_LIB_DIR -maxdepth 1 -type l -name \*.so\* | \
-    while read FILE; do
-        # copy base file
-        base_file=$(readlink -f $FILE)
-        echo "Copying $(basename $base_file)"
-        cp $base_file -t $OUTPUT_SYSROOT_LIB_DIR
-
-        # echo "- - - - -"
-        # echo "Symlink: $FILE"
-        # echo "File:    $base_file"
-
-        # rebuild symlinks
-        loop_continue=true
-        while [ "$loop_continue" = true ]; do
-            reflink=$FILE
-            parent=""
-            next=$OUTPUT_SYSROOT_LIB_DIR/$(basename $reflink)
-            while [ ! -L $next ] && [ ! -f $next ]; do
-                # next link assumed to be relative
-                # TODO: maybe save relative path to resolve next link
-                reflink=${SYSROOT_LIB_DIR}/$(readlink $reflink)
-                parent=$next
-                next=$OUTPUT_SYSROOT_LIB_DIR/$(basename $reflink)
-            done
-            if [ -z "$parent" ]; then
-                loop_continue=false;
-            else
-                # we use basename because the symlink will exist
-                # in the same directory as the target
-                echo "Symlink $(basename $parent)"
-                ln -s $(basename $next) $parent
-            fi
+    if [ "$UPDATE_SYSROOT" = true ]; then
+        for token in "${third_party_includes[@]}"; do
+            assert_file_or_dir_exists $token
+            echo "Copying $(basename $token)"
+            cp -ar $token -t $OUTPUT_SYSROOT_INCLUDE_DIR
         done
-    done
+
+        # cleanup absl folder
+        # NOTE: this takes time (~250 ms)
+        find $OUTPUT_SYSROOT_INCLUDE_DIR/absl ! -name \*.h -type f | \
+        while read FILE; do rm $FILE; done
+
+        find $SYSROOT_LIB_DIR -maxdepth 1 -type f -name \*.so\* | \
+        while read FILE; do
+            echo "Copying $(basename $FILE)"
+            cp $FILE -t $OUTPUT_SYSROOT_LIB_DIR
+        done
+
+        find $SYSROOT_LIB_DIR -maxdepth 1 -type l -name \*.so\* | \
+        while read FILE; do
+            # copy base file
+            base_file=$(readlink -f $FILE)
+            echo "Copying $(basename $base_file)"
+            cp $base_file -t $OUTPUT_SYSROOT_LIB_DIR
+
+            # echo "- - - - -"
+            # echo "Symlink: $FILE"
+            # echo "File:    $base_file"
+
+            # rebuild symlinks
+            loop_continue=true
+            while [ "$loop_continue" = true ]; do
+                reflink=$FILE
+                parent=""
+                next=$OUTPUT_SYSROOT_LIB_DIR/$(basename $reflink)
+                while [ ! -L $next ] && [ ! -f $next ]; do
+                    # next link assumed to be relative
+                    # TODO: maybe save relative path to resolve next link
+                    reflink=${SYSROOT_LIB_DIR}/$(readlink $reflink)
+                    parent=$next
+                    next=$OUTPUT_SYSROOT_LIB_DIR/$(basename $reflink)
+                done
+                if [ -z "$parent" ]; then
+                    loop_continue=false;
+                else
+                    # we use basename because the symlink will exist
+                    # in the same directory as the target
+                    echo "Symlink $(basename $parent)"
+                    ln -s $(basename $next) $parent
+                fi
+            done
+        done
+    fi
 
     SYSROOT_LIB_DIR=$(realpath --relative-to="$OUTPUT_DIR" "$OUTPUT_SYSROOT_LIB_DIR")
     SYSROOT_LIB_DIR="\${WEBRTC_SDK_DIR}/${SYSROOT_LIB_DIR}"
@@ -345,6 +385,14 @@ DEFINES=$(echo $DEFINES | sed 's/ /\n/g')
 # Note: C and C++ flags can also be found in ${NINJA_BUILD_REFERENCE}
 #       but for now they're hard coded here.
 
+if [ $ARCH == "AMD64" ]; then
+    ARCH_FLAGS="-m64 \\-march=x86-64 \\"
+elif [ $ARCH == "ARM64" ]; then
+    ARCH_FLAGS="-m64 \\-march=arm64 \\"
+else
+    ARCH_FLAGS=
+fi
+
 printf "\
 #
 # Sets up variables needed to compile against the WebRTC library
@@ -358,7 +406,7 @@ SET(WEBRTC_INCLUDE_DIR
     ${SYSROOT_INCLUDE_DIR}
 )
 
-SET(WEBRTC_LIB_DIR \${CMAKE_SOURCE_DIR}/Libraries/webrtc_sdk/lib)
+SET(WEBRTC_LIB_DIR \${WEBRTC_SDK_DIR}/lib)
 FILE(GLOB_RECURSE WEBRTC_LIB \${WEBRTC_LIB_DIR}/*.a)
 FILE(GLOB_RECURSE WEBRTC_DEPENDENCIES
     \${WEBRTC_LIB_DIR}/rtc_base/json.o
@@ -379,36 +427,35 @@ SET(WEBRTC_LIBS
 )
 
 SET(WEBRTC_CXX_FLAGS \"\\
-    -Wno-deprecated-declarations \
-    -fno-strict-aliasing \
-    --param=ssp-buffer-size=4 \
-    -fstack-protector \
-    -Wno-builtin-macro-redefined \
-    -funwind-tables \
-    -fPIC \
-    -pipe \
-    -pthread \
-    -m64 \
-    -march=x86-64 \
-    -Wall \
-    -Wno-unused-local-typedefs \
-    -Wno-deprecated-declarations \
-    -Wno-comments \
-    -Wno-missing-field-initializers \
-    -Wno-unused-parameter \
-    -fno-ident \
-    -fdata-sections \
-    -ffunction-sections \
-    -fno-omit-frame-pointer \
-    -fvisibility=hidden \
-    -Wextra \
-    -Wno-unused-parameter \
-    -Wno-missing-field-initializers \
-    -Wno-narrowing \
-    -fno-exceptions \
-    -fno-rtti \
-    -fvisibility-inlines-hidden \
-    -Wnon-virtual-dtor \
+    -Wno-deprecated-declarations \\
+    -fno-strict-aliasing \\
+    --param=ssp-buffer-size=4 \\
+    -fstack-protector \\
+    -Wno-builtin-macro-redefined \\
+    -funwind-tables \\
+    -fPIC \\
+    -pipe \\
+    -pthread \\
+    ${ARCH_FLAGS}
+    -Wall \\
+    -Wno-unused-local-typedefs \\
+    -Wno-deprecated-declarations \\
+    -Wno-comments \\
+    -Wno-missing-field-initializers \\
+    -Wno-unused-parameter \\
+    -fno-ident \\
+    -fdata-sections \\
+    -ffunction-sections \\
+    -fno-omit-frame-pointer \\
+    -fvisibility=hidden \\
+    -Wextra \\
+    -Wno-unused-parameter \\
+    -Wno-missing-field-initializers \\
+    -Wno-narrowing \\
+    -fno-exceptions \\
+    -fno-rtti \\
+    -fvisibility-inlines-hidden \\
+    -Wnon-virtual-dtor \\
 \")
 
 SET(WEBRTC_LINK_OPTIONS \"\\
