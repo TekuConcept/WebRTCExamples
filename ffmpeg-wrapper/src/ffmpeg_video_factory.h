@@ -11,16 +11,18 @@
 #ifndef DEMO_FFMPEG_VIDEO_FACTORY_H_
 #define DEMO_FFMPEG_VIDEO_FACTORY_H_
 
-#include "media/engine/webrtcvideocapturer.h"
+// #include "media/engine/webrtcvideocapturer.h"
+#include "modules/video_capture/video_capture.h"
 
-
-class FFmpegVideoFactory : public cricket::WebRtcVcmFactoryInterface {
+class FFmpegVideoFactory
+// : public cricket::WebRtcVcmFactoryInterface
+{
 public:
     FFmpegVideoFactory();
     ~FFmpegVideoFactory();
-    rtc::scoped_refptr<webrtc::VideoCaptureModule> Create(const char* device);
-    webrtc::VideoCaptureModule::DeviceInfo* CreateDeviceInfo();
-    void DestroyDeviceInfo(webrtc::VideoCaptureModule::DeviceInfo* info);
+    static rtc::scoped_refptr<webrtc::VideoCaptureModule> Create(const char* device);
+    static webrtc::VideoCaptureModule::DeviceInfo* CreateDeviceInfo();
+    // static void DestroyDeviceInfo(webrtc::VideoCaptureModule::DeviceInfo* info);
 };
 
 #endif

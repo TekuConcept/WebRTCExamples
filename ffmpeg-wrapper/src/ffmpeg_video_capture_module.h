@@ -14,7 +14,8 @@
 #include <cstdio> // FILE, popen(), pclose(), fread(), fflush()
 #include <string>
 #include <vector>
-#include "rtc_base/criticalsection.h"
+// #include "rtc_base/criticalsection.h"
+#include "rtc_base/synchronization/mutex.h"
 #include "rtc_base/platform_thread.h"
 #include "modules/video_capture/video_capture.h"
 
@@ -73,7 +74,8 @@ private:
 
     rtc::VideoSinkInterface<webrtc::VideoFrame>* dataCallback_;
     std::unique_ptr<rtc::PlatformThread> captureThread_;
-    rtc::CriticalSection captureCriticalSection_;
+    // rtc::CriticalSection captureCriticalSection_;
+    webrtc::Mutex mutex_;
 
     std::string deviceId_;
     FILE* deviceFd_;
@@ -87,7 +89,8 @@ private:
     static std::vector<DeviceMeta>* GetDevices();
 
     // async functions
-    static bool CaptureThread(void* object);
+    // static bool CaptureThread(void* object);
+    static void CaptureThread(void* object);
     bool CaptureProcess();
     int32_t CheckI420AndPush(
         uint8_t* videoFrame,

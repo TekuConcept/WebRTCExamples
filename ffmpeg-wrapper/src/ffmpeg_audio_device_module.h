@@ -25,7 +25,7 @@ class AudioManager;
 class FFmpegAudioDeviceModule : public webrtc::AudioDeviceModuleForTest {
  public:
 
-  FFmpegAudioDeviceModule();
+  FFmpegAudioDeviceModule(webrtc::TaskQueueFactory* task_queue_factory);
   ~FFmpegAudioDeviceModule() override;
 
   // Retrieve the currently utilized audio layer

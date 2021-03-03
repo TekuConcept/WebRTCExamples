@@ -16,7 +16,7 @@
 
 #include "api/video/i420_buffer.h"
 #include "rtc_base/logging.h"
-#include "rtc_base/timeutils.h"
+#include "rtc_base/time_utils.h"
 #include "system_wrappers/include/clock.h"
 #include "common_video/libyuv/include/webrtc_libyuv.h"
 #include "third_party/libyuv/include/libyuv.h"
@@ -49,7 +49,8 @@ void
 FFmpegVideoCaptureModule::RegisterCaptureDataCallback(
     rtc::VideoSinkInterface<webrtc::VideoFrame>* dataCallback)
 {
-    rtc::CritScope cs(&captureCriticalSection_);
+    // rtc::CritScope cs(&captureCriticalSection_);
+    webrtc::MutexLock lock(&mutex_);
     dataCallback_ = dataCallback;
 }
 
@@ -57,7 +58,8 @@ FFmpegVideoCaptureModule::RegisterCaptureDataCallback(
 void
 FFmpegVideoCaptureModule::DeRegisterCaptureDataCallback()
 {
-    rtc::CritScope cs(&captureCriticalSection_);
+    // rtc::CritScope cs(&captureCriticalSection_);
+    webrtc::MutexLock lock(&mutex_);
     dataCallback_ = nullptr;
 }
 
@@ -80,7 +82,8 @@ FFmpegVideoCaptureModule::StartCapture(
         else StopCapture();
     }
 
-    rtc::CritScope cs(&captureCriticalSection_);
+    // rtc::CritScope cs(&captureCriticalSection_);
+    webrtc::MutexLock lock(&mutex_);
 
     // 1. open [named?] pipe
     frameCount_        = 0;
@@ -119,7 +122,7 @@ FFmpegVideoCaptureModule::StartCapture(
         captureThread_.reset(new rtc::PlatformThread(
             FFmpegVideoCaptureModule::CaptureThread, this, "CaptureThread"));
         captureThread_->Start();
-        captureThread_->SetPriority(rtc::kHighPriority);
+        // captureThread_->SetPriority(rtc::kHighPriority);
     }
 
     captureStarted_ = true;
@@ -135,7 +138,8 @@ FFmpegVideoCaptureModule::StopCapture()
         captureThread_.reset();
     }
 
-    rtc::CritScope cs(&captureCriticalSection_);
+    // rtc::CritScope cs(&captureCriticalSection_);
+    webrtc::MutexLock lock(&mutex_);
     if (captureStarted_) {
         captureStarted_ = false;
         fflush(deviceFd_);
@@ -212,16 +216,23 @@ FFmpegVideoCaptureModule::GetDevices()
 }
 
 
-bool
+// bool
+// FFmpegVideoCaptureModule::CaptureThread(void* object)
+// { return static_cast<FFmpegVideoCaptureModule*>(object)->CaptureProcess(); }
+void
 FFmpegVideoCaptureModule::CaptureThread(void* object)
 // taken from video_capture_linux.cc
-{ return static_cast<FFmpegVideoCaptureModule*>(object)->CaptureProcess(); }
+{
+    FFmpegVideoCaptureModule* module = static_cast<FFmpegVideoCaptureModule*>(object);
+    while (module->CaptureProcess()) { }
+}
 
 
 bool
 FFmpegVideoCaptureModule::CaptureProcess()
 {
-    rtc::CritScope cs(&captureCriticalSection_);
+    // rtc::CritScope cs(&captureCriticalSection_);
+    webrtc::MutexLock lock(&mutex_);
 
     // do one-cycle's worth of work
     if (captureStarted_) {

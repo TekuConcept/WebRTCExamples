@@ -17,9 +17,10 @@
 #include <string>
 
 #include "modules/audio_device/audio_device_generic.h"
-#include "rtc_base/criticalsection.h"
+// #include "rtc_base/criticalsection.h"
+#include "rtc_base/synchronization/mutex.h"
 #include "rtc_base/system/file_wrapper.h"
-#include "rtc_base/timeutils.h"
+#include "rtc_base/time_utils.h"
 
 namespace rtc {
 class PlatformThread;
@@ -125,8 +126,10 @@ class FFmpegAudioDevice : public webrtc::AudioDeviceGeneric {
   void AttachAudioBuffer(webrtc::AudioDeviceBuffer* audioBuffer) override;
 
  private:
-  static bool RecThreadFunc(void*);
-  static bool PlayThreadFunc(void*);
+  // static bool RecThreadFunc(void*);
+  // static bool PlayThreadFunc(void*);
+  static void RecThreadFunc(void*);
+  static void PlayThreadFunc(void*);
   bool RecThreadProcess();
   bool PlayThreadProcess();
 
@@ -137,7 +140,8 @@ class FFmpegAudioDevice : public webrtc::AudioDeviceGeneric {
   int8_t* _playoutBuffer;    // In bytes.
   uint32_t _recordingFramesLeft;
   uint32_t _playoutFramesLeft;
-  rtc::CriticalSection _critSect;
+  // rtc::CriticalSection _critSect;
+  webrtc::Mutex mutex_;
 
   size_t _recordingBufferSizeIn10MS;
   size_t _recordingFramesIn10MS;
@@ -152,8 +156,8 @@ class FFmpegAudioDevice : public webrtc::AudioDeviceGeneric {
   int64_t _lastCallPlayoutMillis;
   int64_t _lastCallRecordMillis;
 
-  webrtc::FileWrapper& _outputFile;
-//   FileWrapper& _inputFile;
+  webrtc::FileWrapper _outputFile;
+//   FileWrapper _inputFile;
   FILE* _inputStream;
   std::string _outputFilename;
   std::string _inputFilename;

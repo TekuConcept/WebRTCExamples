@@ -24,8 +24,9 @@ export PATH=$PATH:/path/to/depot_tools
 # Note: This step may take an hour or two.
 fetch --nohooks webrtc
 cd src
-git checkout branch-heads/72
+git checkout branch-heads/4434
 gclient sync
+# for branch-heads/72, checkout the code a commit or two back
 
 
 # Build WebRTC
@@ -63,7 +64,7 @@ ninja -C out/Default
 
 The specific source files that handle video and audio input are `ffmpeg_video_capture_module` and `ffmpeg_audio_device` respectively. While ffmpeg audio and video output are not yet handled in this example, they can easily be introduced. (See `_outputFile` in `ffmpeg_audio_device` for audio output; See `VideoRenderer` in `linux/main_wnd.cc` for video output.)
 
-Hardware encoding and decoding pass-through haven't been tried yet. Though it is speculated the area of interest for this topic is in `conductor.cc`:
+Hardware encoding and decoding pass-through logic may be implemented here in `conductor.cc`...
 
 ```
 peer_connection_factory_ = webrtc::CreatePeerConnectionFactory(

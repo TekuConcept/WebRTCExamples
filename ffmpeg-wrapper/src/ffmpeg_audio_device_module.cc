@@ -16,8 +16,10 @@
 #include "modules/audio_device/audio_device_generic.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/logging.h"
-#include "rtc_base/refcountedobject.h"
-#include "rtc_base/scoped_ref_ptr.h"
+// #include "rtc_base/refcountedobject.h"
+// #include "rtc_base/scoped_ref_ptr.h"
+#include "rtc_base/ref_counted_object.h"
+#include "api/scoped_refptr.h"
 #include "system_wrappers/include/metrics.h"
 
 #include "ffmpeg_audio_device.h"
@@ -40,7 +42,10 @@
     }                            \
   }
 
-FFmpegAudioDeviceModule::FFmpegAudioDeviceModule() {
+FFmpegAudioDeviceModule::FFmpegAudioDeviceModule(
+  webrtc::TaskQueueFactory* task_queue_factory)
+: audio_device_buffer_(task_queue_factory)
+{
   RTC_LOG(INFO) << __FUNCTION__;
   audio_device_.reset(FFmpegAudioDeviceFactory::CreateFFmpegAudioDevice());
   audio_device_->AttachAudioBuffer(&audio_device_buffer_);

@@ -11,6 +11,8 @@
 #include "ffmpeg_video_factory.h"
 #include "ffmpeg_video_capture_module.h"
 
+#include "rtc_base/ref_counted_object.h"
+
 
 FFmpegVideoFactory::FFmpegVideoFactory() { }
 
@@ -33,7 +35,7 @@ FFmpegVideoFactory::CreateDeviceInfo()
 { return FFmpegVideoCaptureModule::CreateDeviceInfo(); }
 
 
-void
-FFmpegVideoFactory::DestroyDeviceInfo(
-    webrtc::VideoCaptureModule::DeviceInfo* info)
-{ delete info; }
+// void
+// FFmpegVideoFactory::DestroyDeviceInfo(
+//     webrtc::VideoCaptureModule::DeviceInfo* info)
+// { delete info; }
